@@ -207,6 +207,25 @@ var modules = Object.keys(dependencies).filter(function (x) {
 
 var processed = {};
 
+function filterEmpty(v) {
+    return v;
+}
+
+function resolveModule(module, subModule) {
+    var paths = module.replace('bui-', 'bui/').split(/[\/\\]/g).filter(filterEmpty);
+    debug(paths);
+    if (subModule.match(/^\.[^\.]/) && paths.length > 2) {
+        paths.pop();
+    }
+    if (subModule.match(/^\.\./) && paths.length > 2) {
+        paths.pop();
+        paths.pop();
+    }
+    paths = paths.concat(subModule.replace(/\./g, '').split(/[\/\\]/g).filter(filterEmpty));
+    debug(paths);
+    return paths.join('/');
+}
+
 function processFile(module, basePath, file, opt, cb) {
     var srcFilePath = path.join(basePath, file);
     debug();
@@ -226,17 +245,14 @@ function processFile(module, basePath, file, opt, cb) {
             var path2 = path.join(basePath, subModule + '.js');
 
             debug('seek module', subModule, path2, basePath);
-            if (!subModule.match(/^./) || !fs.existsSync(path2)) {
+            if (!subModule.match(/^\./) || !fs.existsSync(path2)) {
                 processed[subModule] = true;
                 return 'require("' + subModule + '")';
             }
             modules.push(subModule);
-            var _basePath = path.resolve(basePath);
-            var _subModule = path.resolve(basePath, subModule);
-            var relative = path.relative(_basePath, _subModule);
-            debug('find module', relative, _basePath, _subModule);
-            subModule = relative.replace(/\\/g, '/');
-            return 'require("' + basePath2 + '/' + subModule + '")';
+            subModule = resolveModule(module, subModule);
+            debug('find module', subModule);
+            return 'require("' + subModule + '")';
         });
         opt = typeof opt === 'string' ? fs.createWriteStream(opt) : opt;
         outputFile(opt, module, data, function (e) {
@@ -252,16 +268,12 @@ function processFile(module, basePath, file, opt, cb) {
                 return void cb();
             }
             //debug(baseModule, basePath, module);
-            var _basePath = path.resolve(basePath);
-            var _subModule = path.resolve(basePath, subModule);
-            var relative = path.relative(_basePath, _subModule);
-            debug('writeModule', module, relative, _basePath, _subModule, path.join(basePath, subModule));
-            var module2 = relative.replace(/\\/g, '/');
-            var module3 = path.join(basePath2, relative).replace(/\\/g, '/');
-            if (processed[module3]) {
+            var subModule2 = resolveModule(module, subModule);
+            debug('write module', subModule2);
+            if (processed[subModule2]) {
                 return void setImmediate(processSubModule, cb);
             }
-            processFile(module3, path.join(basePath, subModule, '..'), module2.match(/[^\/\\]+$/) + '.js', opt, function (e) {
+            processFile(subModule2, path.join(basePath, subModule, '..'), subModule2.match(/[^\/\\]+$/) + '.js', opt, function (e) {
                 if (e) {
                     return void cb(e);
                 }
@@ -329,6 +341,26 @@ modules.forEach(function (m) {
         return;
     }
 
+    if (m === 'bui-extensions') {
+        gulp.task('build-bui-extensions', ['init', 'pre-build'], function (cb) {
+            fs.mkdirSync('dist/extensions');
+            return Promise.all(['multiselect', 'search', 'treegrid', 'treepicker'].map(function (v) {
+                return new Promise(function (ok, failed) {
+                    var basePath = 'src/' + m;
+                    var opt = path.resolve('dist/' + m.replace(/bui-/, '') + "/" + v + '.js');
+                    processFile(m.replace('-', '/') + '/' + v, basePath + '/extensions', v + '.js', opt, function (e) {
+                        if (e) {
+                            failed(e);
+                        } else {
+                            ok();
+                        }
+                    });
+                })
+            }));
+        });
+        return;
+    }
+
     gulp.task('build-' + m, ['init', 'pre-build'], function (cb) {
         var basePath = 'src/' + m;
         var enterPoint = require('./' + basePath + '/package.json').spm.main;
@@ -352,12 +384,16 @@ gulp.task('build', ['init', 'pre-build'].concat(modules.map(function (m) {
 
 gulp.task('compress-js', ['build'], function () {
     return gulp.src([
-        './dist/*.js'
+        './dist/**/*.js'
     ])
         .pipe(uglify({
             output: {
                 ascii_only: true
-            }
+            },
+            compress: {
+                pure_funcs: ['require']
+            },
+            mangle: {except: ['$', 'require']}
         }))
         .pipe(rename({suffix: '-min'}))
         .pipe(gulp.dest('./dist'))
