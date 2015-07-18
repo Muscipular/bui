@@ -238,7 +238,7 @@ function processFile(module, basePath, file, opt, cb) {
         }
         //debug(data);
         var modules = [];
-        data = data.replace(/require\(['"](.+)['"]\)/g, function (d, subModule) {
+        data = data.replace(/require\(['"]([0-9a-zA-Z\-_\/\\\.]+)['"]\)/g, function (d, subModule) {
             if (/bui-.+/.test(subModule)) {
                 return 'require("' + subModule.replace('-', '/') + '")';
             }
@@ -253,6 +253,23 @@ function processFile(module, basePath, file, opt, cb) {
             subModule = resolveModule(module, subModule);
             debug('find module', subModule);
             return 'require("' + subModule + '")';
+        });
+        data = data.replace(/require\.async\(['"]([0-9a-zA-Z\-_\/\\\.]+)['"]/g, function (d, subModule) {
+            console.log(subModule);
+            if (/bui[-\/].+/.test(subModule)) {
+                return 'require.async("' + subModule.replace('-', '/').match(/bui\/[^\/]+/) + '"';
+            }
+            var path2 = path.join(basePath, subModule + '.js');
+
+            debug('seek module', subModule, path2, basePath);
+            if (!subModule.match(/^\./) || !fs.existsSync(path2)) {
+                processed[subModule] = true;
+                return 'require.async("' + subModule + '"';
+            }
+            modules.push(subModule);
+            subModule = resolveModule(module, subModule);
+            debug('find module', subModule);
+            return 'require.async("' + subModule + '"';
         });
         opt = typeof opt === 'string' ? fs.createWriteStream(opt) : opt;
         outputFile(opt, module, data, function (e) {
@@ -369,6 +386,10 @@ modules.forEach(function (m) {
     });
 });
 
+gulp.task('uploader-assets', ['init', 'pre-build'], function (cb) {
+    return gulp.src(['src/bui-uploader/*.swf'])
+        .pipe(gulp.dest('dist/'))
+});
 
 gulp.task('init', modules.map(function (m) {
     return 'init-' + m;
@@ -413,4 +434,4 @@ gulp.task('compress-css', ['build'], function () {
 
 gulp.task('compress', ['build', 'compress-js', 'compress-css']);
 
-gulp.task('default', ['compress']);
+gulp.task('default', ['compress', 'uploader-assets']);
